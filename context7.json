@@ -1,0 +1,13 @@
+{
+  "projectName": "GapRadar API",
+  "description": "AI-powered market gap validator. Submit ideas, get competitor analysis and gap scores.",
+  "language": "pt-BR",
+  "baseUrl": "https://gapradar.com.br",
+  "docsDir": "docs",
+  "schemaFile": "schema/openapi.yaml",
+  "primaryEntities": ["Analysis", "Report", "Competitor", "MarketSignal", "User"],
+  "authMethod": "jwt-bearer",
+  "streamingProtocol": "SSE",
+  "additionalApis": ["graphql"],
+  "tags": ["auth", "analyze", "reports", "billing", "graphql"]
+}

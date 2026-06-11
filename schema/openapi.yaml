@@ -1,0 +1,885 @@
+openapi: 3.0.3
+info:
+  title: GapRadar API
+  description: |
+    API do GapRadar — validador de gaps de mercado com IA.
+
+    Submeta uma ideia de produto e receba análise de concorrentes,
+    sinais de demanda e pontuação de oportunidade (gap score).
+
+    **Autenticação**: Bearer JWT — obtenha o token via `POST /api/auth/login`.
+
+    **Streaming**: Análises podem ser acompanhadas em tempo real via SSE em `GET /api/analyze/stream`.
+
+    **GraphQL**: Disponível em `POST /graphql` com o mesmo token Bearer.
+  version: 1.0.0
+  contact:
+    url: https://gapradar.com.br
+
+servers:
+  - url: https://gapradar.com.br
+    description: Produção
+
+tags:
+  - name: auth
+    description: Autenticação e gerenciamento de conta
+  - name: analyze
+    description: Criação e acompanhamento de análises de mercado
+  - name: reports
+    description: Relatórios formatados e exportação PDF
+  - name: users
+    description: Perfil e estatísticas de uso
+  - name: billing
+    description: Planos, assinaturas e pagamentos
+
+paths:
+  /api/auth/register:
+    post:
+      tags: [auth]
+      summary: Criar conta
+      description: Registra novo usuário com email, senha e nome.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  minLength: 8
+                  example: minhasenha123
+                name:
+                  type: string
+                  example: Maria Silva
+      responses:
+        '201':
+          description: Conta criada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Email já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      description: Autentica com email e senha. Retorna JWT Bearer token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  example: minhasenha123
+      responses:
+        '200':
+          description: Login realizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Credenciais inválidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      summary: Usuário atual
+      description: Retorna dados do usuário autenticado.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dados do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/forgot-password:
+    post:
+      tags: [auth]
+      summary: Solicitar reset de senha
+      description: Envia email com link para redefinição de senha.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+      responses:
+        '200':
+          description: Email enviado (resposta genérica por segurança)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: Se o email existir, você receberá as instruções em breve.
+
+  /api/auth/reset-password:
+    post:
+      tags: [auth]
+      summary: Redefinir senha
+      description: Redefine a senha usando o token recebido por email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                  description: Token recebido no email de reset
+                  example: reset-token-example-abc123
+                password:
+                  type: string
+                  minLength: 8
+                  example: novasenha456
+      responses:
+        '200':
+          description: Senha redefinida
+        '400':
+          description: Token inválido ou expirado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/analyze:
+    post:
+      tags: [analyze]
+      summary: Criar análise de mercado
+      description: |
+        Cria uma análise assíncrona. Retorna imediatamente com `analysisId` e `status: "queued"`.
+
+        Para acompanhar o resultado:
+        - **Polling**: `GET /api/analyze/:id` até `status === "completed"`
+        - **Streaming**: `GET /api/analyze/stream` com SSE (recomendado)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idea, category]
+              properties:
+                idea:
+                  type: string
+                  description: Descrição da ideia de produto a ser analisada
+                  example: Plataforma de agendamento para pet shops
+                category:
+                  type: string
+                  enum: [software, physical, service]
+                  description: Categoria do produto
+                  example: software
+                targetMarket:
+                  type: string
+                  description: Mercado-alvo (opcional)
+                  example: Brasil
+      responses:
+        '202':
+          description: Análise enfileirada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      analysisId:
+                        type: string
+                        example: uuid-example-123
+                      status:
+                        type: string
+                        example: queued
+        '402':
+          description: Limite de análises atingido — upgrade necessário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/analyze/stream:
+    get:
+      tags: [analyze]
+      summary: Streaming de análise via SSE
+      description: |
+        Server-Sent Events para acompanhar o progresso de uma análise em tempo real.
+
+        **Tipos de evento:**
+        - `status` — atualização de progresso (string)
+        - `result` — análise concluída (objeto AnalysisResult)
+        - `done` — stream encerrado
+        - `error` — falha na análise
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: analysisId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: uuid-example-123
+      responses:
+        '200':
+          description: Stream SSE
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Análise não encontrada
+
+  /api/analyze/{id}:
+    get:
+      tags: [analyze]
+      summary: Obter resultado de análise
+      description: Retorna o status e resultado de uma análise pelo ID.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: uuid-example-123
+      responses:
+        '200':
+          description: Dados da análise
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Analysis'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Análise não encontrada
+
+  /api/analyses:
+    get:
+      tags: [analyze]
+      summary: Listar análises do usuário
+      description: Retorna lista paginada das análises do usuário autenticado.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+      responses:
+        '200':
+          description: Lista de análises
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Analysis'
+                  metadata:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/analyses/{id}:
+    delete:
+      tags: [analyze]
+      summary: Deletar análise
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: uuid-example-123
+      responses:
+        '204':
+          description: Análise deletada
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Análise não encontrada
+
+  /api/reports/{analysisId}:
+    get:
+      tags: [reports]
+      summary: Obter relatório completo
+      description: Retorna o relatório formatado da análise, com narrativa e recomendações.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: analysisId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: uuid-example-123
+      responses:
+        '200':
+          description: Relatório completo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Relatório não encontrado
+
+  /api/reports/{analysisId}/export:
+    get:
+      tags: [reports]
+      summary: Exportar relatório como PDF
+      description: |
+        Gera e retorna URL do relatório em PDF.
+        Disponível nos planos **Pro** e **Avulso**.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: analysisId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: uuid-example-123
+      responses:
+        '200':
+          description: URL do PDF gerado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                        example: https://gapradar.com.br/exports/report-uuid-example-123.pdf
+                      expiresAt:
+                        type: string
+                        format: date-time
+        '402':
+          description: Plano não inclui exportação PDF
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/me:
+    get:
+      tags: [users]
+      summary: Perfil e stats de uso
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [users]
+      summary: Atualizar perfil
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Maria Silva
+      responses:
+        '200':
+          description: Perfil atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/me/usage:
+    get:
+      tags: [users]
+      summary: Estatísticas de uso do mês
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stats de uso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      analysesUsed:
+                        type: integer
+                        example: 2
+                      analysesLimit:
+                        type: integer
+                        example: 3
+                      resetDate:
+                        type: string
+                        format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/billing/plans:
+    get:
+      tags: [billing]
+      summary: Listar planos disponíveis
+      description: Retorna todos os planos com preços e limites. Público, sem auth.
+      responses:
+        '200':
+          description: Lista de planos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plan'
+
+  /api/billing/checkout:
+    post:
+      tags: [billing]
+      summary: Criar sessão de checkout Stripe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId:
+                  type: string
+                  enum: [starter, pro, avulso]
+                  example: pro
+                successUrl:
+                  type: string
+                  example: https://gapradar.com.br/dashboard?upgraded=true
+                cancelUrl:
+                  type: string
+                  example: https://gapradar.com.br/pricing
+      responses:
+        '200':
+          description: URL de checkout gerada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      checkoutUrl:
+                        type: string
+                        example: https://checkout.stripe.com/pay/cs_example_123
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/billing/subscription:
+    get:
+      tags: [billing]
+      summary: Assinatura atual do usuário
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dados da assinatura
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Subscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/billing/portal:
+    post:
+      tags: [billing]
+      summary: Acessar Stripe Customer Portal
+      description: Gera URL para o portal do Stripe onde o usuário pode gerenciar ou cancelar assinatura.
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                returnUrl:
+                  type: string
+                  example: https://gapradar.com.br/dashboard
+      responses:
+        '200':
+          description: URL do portal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      portalUrl:
+                        type: string
+                        example: https://billing.stripe.com/session/example_session
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Token ausente, inválido ou expirado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Unauthorized
+            statusCode: 401
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Mensagem de erro descritiva
+        statusCode:
+          type: integer
+          example: 400
+
+    AuthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+              description: JWT Bearer token
+              example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+            user:
+              $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: uuid-example-user-123
+        email:
+          type: string
+          example: user@example.com
+        name:
+          type: string
+          example: Maria Silva
+        plan:
+          type: string
+          enum: [free, starter, pro, avulso]
+          example: free
+        analysesUsed:
+          type: integer
+          example: 1
+        analysesLimit:
+          type: integer
+          example: 3
+        createdAt:
+          type: string
+          format: date-time
+
+    Analysis:
+      type: object
+      properties:
+        id:
+          type: string
+          example: uuid-example-123
+        idea:
+          type: string
+          example: Plataforma de agendamento para pet shops
+        category:
+          type: string
+          enum: [software, physical, service]
+          example: software
+        targetMarket:
+          type: string
+          example: Brasil
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+          example: completed
+        result:
+          $ref: '#/components/schemas/AnalysisResult'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AnalysisResult:
+      type: object
+      properties:
+        gapScore:
+          type: number
+          minimum: 0
+          maximum: 10
+          example: 8
+          description: Pontuação de gap de mercado (0 = saturado, 10 = grande oportunidade)
+        demandScore:
+          type: number
+          minimum: 0
+          maximum: 10
+          example: 7
+          description: Pontuação de demanda observada nas fontes
+        competitors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Competitor'
+        marketSignals:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketSignal'
+        summary:
+          type: string
+          example: O mercado apresenta demanda crescente com poucos players especializados...
+        opportunities:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            type: string
+
+    Competitor:
+      type: object
+      properties:
+        name:
+          type: string
+          example: PetScheduler
+        url:
+          type: string
+          example: https://petscheduler.example.com
+        description:
+          type: string
+          example: Plataforma de agendamento para clínicas veterinárias
+        source:
+          type: string
+          example: producthunt
+        sentiment:
+          type: string
+          enum: [positive, neutral, negative]
+          example: neutral
+
+    MarketSignal:
+      type: object
+      properties:
+        source:
+          type: string
+          example: hackernews
+        signal:
+          type: string
+          example: Discussão sobre dificuldade de agendamento de serviços para pets
+        sentiment:
+          type: string
+          enum: [positive, neutral, negative]
+          example: positive
+        url:
+          type: string
+          example: https://news.ycombinator.com/item?id=example123
+
+    Report:
+      type: object
+      properties:
+        id:
+          type: string
+          example: uuid-report-example-456
+        analysisId:
+          type: string
+          example: uuid-example-123
+        title:
+          type: string
+          example: Relatório de Mercado — Plataforma de agendamento para pet shops
+        executiveSummary:
+          type: string
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              content:
+                type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+          enum: [free, starter, pro, avulso]
+        name:
+          type: string
+          example: Pro
+        price:
+          type: number
+          example: 99
+        currency:
+          type: string
+          example: BRL
+        interval:
+          type: string
+          enum: [month, one_time]
+          example: month
+        analysesLimit:
+          type: integer
+          nullable: true
+          example: null
+          description: null = ilimitado
+        features:
+          type: array
+          items:
+            type: string
+
+    Subscription:
+      type: object
+      properties:
+        plan:
+          type: string
+          enum: [free, starter, pro, avulso]
+        status:
+          type: string
+          enum: [active, canceled, past_due, trialing]
+        currentPeriodEnd:
+          type: string
+          format: date-time
+        cancelAtPeriodEnd:
+          type: boolean
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 10
+        totalPages:
+          type: integer
+          example: 5
