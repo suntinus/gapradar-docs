@@ -1,0 +1,9 @@
+remote_theme: just-the-docs/just-the-docs
+title: GapRadar API Docs
+description: Documentação pública da API GapRadar — validador de gaps de mercado com IA
+baseurl: ""
+url: "https://docs.gapradar.com.br"
+lang: pt-BR
+
+search_enabled: true
+footer_content: "© 2026 Suntinus. MIT License."
